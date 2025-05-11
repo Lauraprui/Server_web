@@ -1,0 +1,32 @@
+#!/bin/bash
+apt-get update -y
+apt-get install -y docker.io
+systemctl start docker
+systemctl enable docker
+usermod -aG docker admin
+
+mkdir -p /opt/nginx/certs /opt/nginx/html/{en,es,fr,common}
+
+cat << 'CERT_EOF' > /opt/nginx/certs/server.crt
+${ssl_cert_pem}
+CERT_EOF
+
+cat << 'KEY_EOF' > /opt/nginx/certs/server.key
+${ssl_key_pem}
+KEY_EOF
+
+cat << 'NGINX_CONF_EOF' > /opt/nginx/nginx.conf
+${nginx_conf_content}
+NGINX_CONF_EOF
+
+echo "<h1>Welcome!</h1>"     > /opt/nginx/html/en/index.html
+echo "<h1>¡Bienvenido!</h1>" > /opt/nginx/html/es/index.html
+echo "<h1>Bienvenue!</h1>"   > /opt/nginx/html/fr/index.html
+echo "<h1>404 Not Found</h1>" > /opt/nginx/html/common/404.html
+
+docker run -d --name nginx \
+  -p 80:80 -p 443:443 \
+  -v /opt/nginx/certs:/etc/nginx/certs:ro \
+  -v /opt/nginx/nginx.conf:/etc/nginx/nginx.conf:ro \
+  -v /opt/nginx/html:/usr/share/nginx/html:ro \
+  nginx:latest
