@@ -1,18 +1,3 @@
-# IP Elastica
-#resource "aws_eip" "ip_elastica_nginx" {
- # instance = aws_instance.nginx_instancia.id
-
- # tags = {
- #   Name = "EIP nginx"
- # }
-#}
-
-# Asociar IP Elastica
-#resource "aws_eip_association" "asociar_ip_elastica" {
- # instance_id   = aws_instance.nginx_instancia.id
- # allocation_id = aws_eip.ip_elastica_nginx.id
-#}
-
 # Grupo seguridad apache
 resource "aws_security_group" "apache_sg" {
   name   = "apache_sg"
@@ -127,18 +112,10 @@ resource "aws_security_group" "sg_ldap_instancia" {
     Name = "Grupo de seguridad para LDAP"
   }
 }
-
-# Que salga la ip elástica de nginx
-#output "ip_elastica_nginx" {
- # value = aws_eip.ip_elastica_nginx.public_ip
- # description = "IP Elastica del nginx"
-#}
-
 output "ip_nginx" {
   value = aws_instance.nginx_instancia.public_ip
   description = "IP de Nginx"
 }
-# Que salga la ip elástica de LDAP
 output "ip_ldap" {
   value = aws_instance.ldap_instancia.private_ip
   description = "IP LDAP"
@@ -174,10 +151,7 @@ FROM osixia/openldap:1.5.0
 # Variables de entorno
 ENV LDAP_ORGANISATION="Laura LDAP"
 ENV LDAP_DOMAIN="laura.local"
-ENV LDAP_ADMIN_PASSWORD="laura1234"
-ENV LDAP_READONLY_USER="true"
-ENV LDAP_READONLY_USER_USERNAME="reader"
-ENV LDAP_READONLY_USER_PASSWORD="reader_password"
+ENV LDAP_ADMIN_PASSWORD="admin"
 
 COPY bootstrap.ldif /container/service/slapd/assets/config/bootstrap/ldif/02-custom-users.ldif
 EOT
@@ -225,10 +199,10 @@ sleep 10
 
 docker cp bootstrap.ldif ldap:/tmp
 
-docker exec ldap ldapadd -x -D "cn=admin,dc=laura,dc=local" -w laura1234 -f /tmp/bootstrap.ldif
+docker exec ldap ldapadd -x -D "cn=admin,dc=laura,dc=local" -w admin -f /tmp/bootstrap.ldif
 
-docker exec ldap ldappasswd -x -D "cn=admin,dc=laura,dc=local" -w laura1234 -s "laura" "uid=laura,ou=users,dc=laura,dc=local"
-docker exec ldap ldappasswd -x -D "cn=admin,dc=laura,dc=local" -w laura1234 -s "jose" "uid=jose,ou=users,dc=laura,dc=local"
+docker exec ldap ldappasswd -x -D "cn=admin,dc=laura,dc=local" -w admin -s "laura" "uid=laura,ou=users,dc=laura,dc=local"
+docker exec ldap ldappasswd -x -D "cn=admin,dc=laura,dc=local" -w admin -s "jose" "uid=jose,ou=users,dc=laura,dc=local"
 
 docker stop ldap
 docker start ldap
@@ -242,70 +216,89 @@ EOF
 
 
 resource "aws_instance" "apache_instancia" {
-  ami                         = "ami-064519b8c76274859" # Debian 12
+  ami                         = "ami-064519b8c76274859" # Debian 12 (para el host EC2)
   instance_type               = "t2.micro"
   subnet_id                   = aws_subnet.Subred_pub_vpc2.id
   key_name                    = data.aws_key_pair.arwen.key_name
-  associate_public_ip_address = true # Necesario para que Nginx pueda accederlo por IP pública si no están en la misma VPC o si el SG lo requiere
+  associate_public_ip_address = true
   vpc_security_group_ids      = [aws_security_group.apache_sg.id]
   depends_on                  = [aws_instance.ldap_instancia]
 
-  user_data = <<-EOF
+  user_data = <<EOF
 #!/bin/bash
 sleep 50
-apt update -y
-apt install -y docker.io
-systemctl start docker
-systemctl enable docker
+apt-get update -y
+apt-get install -y docker.io
+
+systemctl enable --now docker
 usermod -aG docker admin
 
-# 2. Crear directorios y configuración para Apache
-mkdir -p /opt/apache/conf.d /opt/apache/htdocs/secure_html
+mkdir -p /opt/apache_host/conf.d /opt/apache_host/html/protected
 
-# 3. Configuración de autenticación LDAP para Apache
-# Usamos la IP privada de la instancia LDAP
-# El DN de Bind es el usuario 'reader' que creamos en el user_data de LDAP,
-# es una mejor práctica no usar el admin DN para búsquedas de autenticación.
-cat << 'APACHE_AUTH_CONF' > /opt/apache/conf.d/auth_ldap.conf
-<Directory "/usr/local/apache2/htdocs/secure_html">
+cat > /opt/apache_host/html/index.html <<INDEX_HTML
+<h1>Página principal de Apache (no segura)</h1>
+<p>Accede a <a href="/protegido/">/protegido/</a> para autenticarte.</p>
+INDEX_HTML
+
+cat > /opt/apache_host/html/protected/index.html <<PROTECTED_HTML
+<h1>¡Bienvenido al Area Super Protegida!</h1>
+<p>Autenticacion LDAP contra Debian-Apache OK</p>
+PROTECTED_HTML
+
+cat > /opt/apache_host/conf.d/ldap.conf <<LDAP_CONF
+# ServerName localhost
+
+Alias /protegido /var/www/html/protected/
+
+<Directory "/var/www/html/protected/">
     AuthType Basic
-    AuthName "Area Restringida - Login con LDAP"
+    AuthName "Acceso LDAP Protegido"
     AuthBasicProvider ldap
-
-    # LDAP URL: ldap://<ldap_server_ip>:<port>/<base_dn>?<uid_attribute_to_search_for_user>
-    AuthLDAPURL "ldap://${aws_instance.ldap_instancia.private_ip}:389/ou=users,dc=laura,dc=local?uid" NONE
-
-    # DN para hacer el bind (búsqueda) inicial. Usar un usuario con permisos de lectura.
-    AuthLDAPBindDN "uid=reader,ou=system,dc=laura,dc=local"
-    AuthLDAPBindPassword "reader_password"
-
-    # Opcional: Si necesitas que el usuario pertenezca a un grupo específico
-    # Require ldap-group cn=appusers,ou=groups,dc=laura,dc=local
-    
+    AuthLDAPURL "ldap://${aws_instance.ldap_instancia.private_ip}:389/dc=laura,dc=local?uid" NONE
+    AuthLDAPBindDN "cn=admin,dc=laura,dc=local"
+    AuthLDAPBindPassword "admin"
     Require valid-user
 </Directory>
-APACHE_AUTH_CONF
+LDAP_CONF
 
-echo "<h1>¡Bienvenido al Área Segura!</h1><p>Si ves esto, te has autenticado contra LDAP correctamente, ¡ji ji!</p>" > /opt/apache/htdocs/secure_html/index.html
-echo "<h1>Página principal de Apache (no segura)</h1>" > /opt/apache/htdocs/index.html
+cat > /opt/apache_host/Dockerfile <<DOCKERFILE
+FROM debian:12
 
+ENV DEBIAN_FRONTEND=noninteractive
 
-# 5. Desplegar Apache en Docker
-# La imagen httpd:2.4 ya incluye mod_ldap y mod_authnz_ldap
-docker run -d --name apache_server \
+RUN apt-get update && \
+    apt-get install -y apache2  && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN a2enmod ldap && \
+    a2enmod authnz_ldap
+
+COPY conf.d/ldap.conf /etc/apache2/conf-available/ldap-auth.conf
+RUN a2enconf ldap-auth
+
+COPY html/protected/index.html /var/www/html/protected/index.html
+COPY html/index.html /var/www/html/index.html
+
+EXPOSE 80
+
+CMD ["apache2ctl", "-D", "FOREGROUND"]
+DOCKERFILE
+
+echo "Construyendo la imagen Docker apache..."
+cd /opt/apache_host
+docker build -t apache .
+
+docker run -d --name apache_server_debian_ldap \
+  --restart always \
   -p 80:80 \
-  -v /opt/apache/conf.d:/usr/local/apache2/conf.d:ro \
-  -v /opt/apache/htdocs:/usr/local/apache2/htdocs:ro \
-  httpd:2.4-alpine 
-  # Usamos alpine para una imagen más ligera, pero httpd:2.4 también funciona
-
-echo "Servidor Apache configurado con autenticación LDAP."
+  apache
 EOF
 
   tags = {
     Name = "apache"
   }
 }
+
 
 
 
@@ -317,16 +310,14 @@ resource "aws_instance" "nginx_instancia" {
   vpc_security_group_ids = [aws_security_group.sg_nginx_instancia.id]
   depends_on    = [aws_instance.apache_instancia]
 
-  # Renderizamos el contenido de nginx.conf directamente aquí para asegurar el orden
   user_data = templatefile("${path.module}/nginx/user_data_nginx.sh.tftpl", {
-    ssl_cert_pem          = var.ssl_cert_pem
-    ssl_key_pem           = var.ssl_key_pem
-    # Pasamos el contenido renderizado de nginx.conf a la plantilla del user_data
-    nginx_conf_content    = templatefile("${path.module}/nginx/nginx.conf.tftpl", {
+    ssl_cert_pem       = var.ssl_cert_pem
+    ssl_key_pem        = var.ssl_key_pem
+    nginx_conf_content = templatefile("${path.module}/nginx/nginx.conf.tftpl", {
       apache_private_ip = aws_instance.apache_instancia.private_ip
+      apache_public_ip = aws_instance.apache_instancia.public_ip
     })
   })
-
   tags = {
     Name = "nginx"
   }
