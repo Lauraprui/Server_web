@@ -1,0 +1,53 @@
+name: Destroy
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: "'yes' para destruirlo"
+        required: true
+        default: "no"
+
+jobs:
+  terraform-destroy:
+    if: ${{ github.event.inputs.confirm_destroy == 'yes' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Instalar terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Crear archivo terraform.tfvars
+        run: |
+          cat <<EOF >> terraform/terraform.tfvars
+          aws_access_key_id = "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          aws_secret_access_key = "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          aws_session_token = "${{ secrets.AWS_SESSION_TOKEN }}"
+          EOF
+
+      - name: Credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Descargar el state de el bucket
+        run: aws s3 cp s3://${{ secrets.AWS_S3_BUCKET }}/terraform.tfstate terraform/terraform.tfstate
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: 'us-east-1'
+
+      - name: Init Terraform
+        run: terraform init
+        working-directory: terraform
+
+      - name: Destroy Terraform
+        run: terraform destroy -auto-approve"
+        working-directory: terraform
