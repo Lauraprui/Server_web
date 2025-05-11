@@ -136,6 +136,7 @@ resource "aws_instance" "ldap_instancia" {
 
   user_data = <<-EOF
 #!/bin/bash
+sleep 30
 apt update -y
 apt install -y docker.io ldap-utils
 systemctl start docker
