@@ -27,6 +27,11 @@ jobs:
           aws_access_key_id = "${{ secrets.AWS_ACCESS_KEY_ID }}"
           aws_secret_access_key = "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
           aws_session_token = "${{ secrets.AWS_SESSION_TOKEN }}"
+          VPC_IPS               = ["10.0.0.0/16", "10.1.0.0/16"]
+          Subnet_VPC1           = "10.0.1.0/24"
+          Subnet_VPC2_pub       = "10.1.1.0/24"
+          Subnet_VPC2_priv      = "10.1.2.0/24"
+          key_name              = "arwen"
           EOF
 
       - name: Credenciales AWS
@@ -49,5 +54,5 @@ jobs:
         working-directory: terraform
 
       - name: Destroy Terraform
-        run: terraform destroy -auto-approve"
+        run: terraform destroy -auto-approve
         working-directory: terraform
