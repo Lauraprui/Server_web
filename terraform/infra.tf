@@ -157,7 +157,7 @@ resource "aws_route_table_association" "Subred_pub_asocia2" {
 # Asociación subred priv vpc2
 resource "aws_route_table_association" "Subred_priv_asocia2" {
   subnet_id      = aws_subnet.Subred_priv_vpc2.id
-  route_table_id = aws_route_table.t_enru_vpc2.id
+  route_table_id = aws_route_table.ruta_priv_vpc2.id
 }
 
 # Crear una Elastic IP para el NAT Gateway de la VPC 2
